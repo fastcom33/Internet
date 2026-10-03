@@ -38,6 +38,7 @@ const fmt=t=>t?new Date(t).toLocaleString('en-MY',{dateStyle:'medium',timeStyle:
 const msg=t=>$('#app').innerHTML=`<h1>${esc(CFG.biz)}</h1><div class="card">${t}</div>`;
 
 async function route(){const h=location.hash;
+if(!h||h==='#'||h==='#/')return location.replace('promo.html');
  if(!sb)return msg('Website not configured yet: Supabase keys are missing in index.html.');
  if(!PK.length){const{data}=await sb.from('packages').select('*').order('idx');PK=(data||[]).map(x=>({n:x.name,p:Number(x.price),d:x.days,m:x.months}))}
  const m=h.match(/^#\/u\/(.+)$/);
