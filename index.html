@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prepaid Home Internet</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{--bg:#f6f7fb;--c:#fff;--t:#1b1f2a;--m:#6b7280;--p:#2563eb;--b:#e5e7eb}
+@media(prefers-color-scheme:dark){:root{--bg:#12141a;--c:#1c1f28;--t:#eef0f5;--m:#9aa1b0;--b:#2c303c}}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--t)}
+.w{max-width:720px;margin:0 auto;padding:16px}
+.card{background:var(--c);border:1px solid var(--b);border-radius:12px;padding:16px;margin:12px 0}
+h1{font-size:1.4rem;margin:8px 0}h2{font-size:1.1rem;margin:0 0 8px}
+.m{color:var(--m);font-size:.9rem}
+.g{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.pk{border:2px solid var(--b);border-radius:10px;padding:12px;cursor:pointer;background:var(--c);color:var(--t);text-align:left;font:inherit}
+.pk.on{border-color:var(--p);background:rgba(37,99,235,.1)}.pk b{font-size:1.2rem;display:block}
+button.b,a.b{background:var(--p);color:#fff;border:0;border-radius:8px;padding:10px 14px;font:inherit;cursor:pointer;text-decoration:none;display:inline-block}
+button.s,a.s{background:transparent;color:var(--t);border:1px solid var(--b)}
+input{width:100%;padding:9px;border:1px solid var(--b);border-radius:8px;background:var(--bg);color:var(--t);font:inherit;margin:4px 0 8px}
+.tag{padding:2px 8px;border-radius:99px;font-size:.8rem}.ok{background:#dcfce7;color:#166534}.no{background:#fee2e2;color:#991b1b}
+.ov{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:.9rem}td,th{padding:6px;border-bottom:1px solid var(--b);text-align:left;vertical-align:middle}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+</style></head><body><div class="w" id="app"></div>
+<script>
+/* ===== SETTINGS: edit these ===== */
+const SUPABASE_URL='https://pxzhhpfnvawtksfopnsd.supabase.co';
+const SUPABASE_KEY='sb_publishable_OIznls2GWgp9N8QcO6-mtw_7UZ4N5wq';
+const CFG={biz:'Fast Communication Sdn Bhd',accName:'Fast Communication Sdn Bhd',wa:'https://wa.me/message/63F46RCL57PHJ1',qrImg:'payqr.png'};
+const INSTALL=80,DEPOSIT=250; // display only; the server calculates the real amount
+/* ================================= */
+let sb=null,PK=[],sel=0;
+try{if(SUPABASE_URL.startsWith('https://'))sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY)}catch(e){}
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=t=>t?new Date(t).toLocaleString('en-MY',{dateStyle:'medium',timeStyle:'short'}):'-';
+const msg=t=>$('#app').innerHTML=`<h1>${esc(CFG.biz)}</h1><div class="card">${t}</div>`;
+
+async function route(){const h=location.hash;
+ if(!sb)return msg('Website not configured yet: Supabase keys are missing in index.html.');
+ if(!PK.length){const{data}=await sb.from('packages').select('*').order('idx');PK=(data||[]).map(x=>({n:x.name,p:Number(x.price),d:x.days,m:x.months}))}
+ const m=h.match(/^#\/u\/(.+)$/);
+ if(m)return customer(decodeURIComponent(m[1]));
+ if(h==='#/admin')return admin();
+ if(h==='#/scan')return scanner();
+ home()}
+function home(){$('#app').innerHTML=`<h1>${esc(CFG.biz)}</h1><div class="card"><p>Scan the QR sticker on your modem to check your account or top up.</p><a class="b" href="#/scan">Scan modem QR with camera</a></div><p class="m"><a href="promo.html">Packages &amp; promotions</a> &middot; <a href="terms.html">Terms</a> &middot; <a href="#/admin">Admin</a></p>`}
+
+/* ---------- customer ---------- */
+async function customer(sn){
+ msg('Loading…');
+ const{data:u}=await sb.rpc('get_unit',{p_serial:sn});
+ if(!u)return msg(`Unit <b>${esc(sn)}</b> not found. Please contact us on <a href="${esc(CFG.wa)}">WhatsApp</a>.`);
+ const exp=u.expires_at?new Date(u.expires_at).getTime():0,active=exp>Date.now();
+ const left=7*864e5-(Date.now()-new Date(u.created_at).getTime()),win=left>0;
+ const k=PK[sel],waive=!u.activated&&win&&k.m>=12;
+ const fees=u.activated?0:(waive?0:INSTALL)+DEPOSIT,tot=k.p+fees;
+ $('#app').innerHTML=`<h1>${esc(CFG.biz)}</h1>
+ <div class="card"><h2>Unit: ${esc(sn)}</h2>Status: <span class="tag ${active?'ok':'no'}">${active?'Active':'Expired / Not active'}</span><br>
+ <span class="m">Valid until: ${fmt(u.expires_at)}</span>${u.pending>0?'<p class="m">Payment awaiting confirmation…</p>':''}</div>
+ <div class="card"><h2>1. Choose package</h2><div class="g">${PK.map((x,i)=>`<button class="pk ${i===sel?'on':''}" onclick="sel=${i};route()"><span class="m">${esc(x.n)}</span><b>RM${x.p}</b></button>`).join('')}</div>
+ ${u.activated?'':`<p class="m">First-time setup: installation ${waive?`<s>RM${INSTALL}</s> <b>FREE</b>`:`RM${INSTALL} (non-refundable)`} + modem deposit RM${DEPOSIT} (refundable) = RM${fees}</p>
+ ${!waive&&win?`<p class="tag ok">Choose 12 months or more within ${Math.ceil(left/864e5)} day(s) to waive the RM${INSTALL} installation fee!</p>`:''}`}
+ <h2 style="margin-top:12px">Total: RM${tot}</h2></div>
+ <div class="card"><h2>2. Pay by QR</h2><p>Scan this DuitNow / TNG QR with your banking or e-wallet app and pay <b>RM${tot}</b> to <b>${esc(CFG.accName)}</b>.</p>
+ <img src="${CFG.qrImg}" alt="Payment QR" style="max-width:260px;width:100%;display:block;margin:8px auto" onerror="this.style.display='none'">
+ <p><b>IMPORTANT:</b> in the payment <b>remark / note / reference</b> box of your app, type your unit no.: <b style="font-size:1.15rem">${esc(sn)}</b> <button class="b s" style="padding:4px 10px" data-sn="${esc(sn)}" onclick="navigator.clipboard&&navigator.clipboard.writeText(this.dataset.sn);this.textContent='Copied'">Copy</button></p>
+ <p class="m">If your app has no remark box, that is OK: enter the receipt reference number in step 3 so we can match your payment.</p></div>
+ <div class="card"><h2>3. Confirm</h2><p class="m">By paying you agree to the <a href="terms.html" target="_blank">Terms &amp; Conditions</a>. <a href="promo.html" target="_blank">See promotions</a></p>
+ <input id="rf2" placeholder="Referred by (friend's unit no., optional)"><input id="nm" placeholder="Your name / phone (optional)"><input id="rf" placeholder="Receipt reference no. (optional, helps us confirm faster)">
+ <button class="b" id="pb" onclick="submitPay('${esc(sn)}')">I have paid RM${tot}</button>
+ <p class="m">Need help? <a href="${esc(CFG.wa)}" target="_blank">WhatsApp us</a></p></div>`}
+async function submitPay(sn){const b=$('#pb');b.disabled=true;
+ const{data,error}=await sb.rpc('submit_payment',{p_serial:sn,p_pkg:sel,p_payer:$('#nm').value,p_ref:$('#rf').value,p_referred_by:$('#rf2').value.trim()});
+ b.disabled=false;if(error)return alert(error.message);
+ alert('Thank you! Please make sure you paid RM'+data.amount+'. We will activate your service after verifying your payment.');route()}
+
+/* ---------- camera scanner ---------- */
+function scanner(){$('#app').innerHTML=`<h1>Scan modem QR</h1><div class="card"><video id="v" playsinline muted style="width:100%;border-radius:10px"></video><p class="m" id="sm">Point the camera at the QR sticker on your modem.</p><a class="b s" href="#">Cancel</a></div>`;
+ let st,stop=false;const v=$('#v'),cv=document.createElement('canvas'),cx=cv.getContext('2d',{willReadFrequently:true});
+ const end=()=>{stop=true;st&&st.getTracks().forEach(t=>t.stop())};
+ window.addEventListener('hashchange',end,{once:true});
+ function tick(){if(stop)return;if(v.readyState>=2&&v.videoWidth){cv.width=v.videoWidth;cv.height=v.videoHeight;cx.drawImage(v,0,0);const d=cx.getImageData(0,0,cv.width,cv.height),r=window.jsQR&&jsQR(d.data,d.width,d.height);
+  if(r&&r.data){const m=r.data.match(/#\/u\/(.+)$/);if(m){end();location.hash='#/u/'+m[1];return}$('#sm').textContent='Not a valid modem QR code.'}}requestAnimationFrame(tick)}
+ navigator.mediaDevices&&navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}}).then(s=>{st=s;v.srcObject=s;v.play();tick()}).catch(()=>{$('#sm').textContent='Camera not available. Allow camera access (https required) or use your phone camera app.'})}
+
+/* ---------- admin ---------- */
+async function admin(){
+ const{data:{session}}=await sb.auth.getSession();
+ if(!session){$('#app').innerHTML=`<h1>Admin login</h1><div class="card"><input id="em" type="email" placeholder="Email"><input id="pw" type="password" placeholder="Password"><button class="b" onclick="login()">Login</button> <a class="b s" href="#">Back</a></div>`;return}
+ const[pp,uu]=await Promise.all([sb.from('payments').select('*').eq('status','pending').order('created_at'),sb.from('units').select('*').order('created_at',{ascending:false})]);
+ const pend=pp.data||[],units=uu.data||[],base=location.href.split('#')[0];
+ $('#app').innerHTML=`<h1>Admin</h1><div class="row"><a class="b s" href="#">Home</a><button class="b s" onclick="logout()">Logout</button></div>
+ <div class="card"><h2>Pending payments (${pend.length})</h2><div class="ov"><table><tr><th>Unit (remark)</th><th>Package</th><th>RM</th><th>Payer / ref</th><th>Time</th><th></th></tr>
+ ${pend.map(p=>`<tr><td><b>${esc(p.serial)}</b></td><td>${esc((PK[p.pkg_idx]||{}).n)}</td><td>${p.amount}</td><td>${esc(p.payer)} ${esc(p.ref)}${p.referred_by?'<br><span class="m">Referred by '+esc(p.referred_by)+'</span>':''}</td><td>${fmt(p.created_at)}</td>
+ <td><button class="b" onclick="approve(${p.id})">Approve</button> <button class="b s" onclick="reject(${p.id})">Reject</button></td></tr>`).join('')||'<tr><td colspan=6 class="m">None</td></tr>'}</table></div></div>
+ <div class="card"><h2>Add modem unit</h2><div class="row"><input id="sn" placeholder="Unit no. e.g. RT-7K2M9Q" style="flex:1"><button class="b s" onclick="gen()">Random</button><button class="b" onclick="addUnit()">Add &amp; make QR</button></div>
+ <p class="m">Use a random unit no. so others cannot guess other customers' units.</p></div>
+ <div class="card"><h2>Units (${units.length})</h2>
+ ${units.map(u=>`<div class="row" style="border-bottom:1px solid var(--b);padding:8px 0"><div id="q-${esc(u.serial)}"></div><div style="flex:1"><b>${esc(u.serial)}</b>
+ <span class="tag ${u.expires_at&&new Date(u.expires_at)>new Date()?'ok':'no'}">${u.expires_at&&new Date(u.expires_at)>new Date()?'Active':'Inactive'}</span><br><span class="m">Expiry: ${fmt(u.expires_at)} &middot; Referrals: ${u.refs}</span><br>
+ <input type="datetime-local" id="d-${esc(u.serial)}" style="width:auto"> <button class="b s" onclick="setExp('${esc(u.serial)}')">Set expiry (manual)</button><br>
+ <button class="b s" onclick="dl('${esc(u.serial)}')">Download QR</button> <button class="b s" onclick="delUnit('${esc(u.serial)}')">Delete</button></div></div>`).join('')}</div>`;
+ units.forEach(u=>new QRCode(document.getElementById('q-'+u.serial),{text:base+'#/u/'+encodeURIComponent(u.serial),width:110,height:110}))}
+async function login(){const{error}=await sb.auth.signInWithPassword({email:$('#em').value,password:$('#pw').value});error?alert(error.message):admin()}
+async function logout(){await sb.auth.signOut();admin()}
+function gen(){$('#sn').value='RT-'+Array.from(crypto.getRandomValues(new Uint8Array(6)),b=>'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[b%32]).join('')}
+async function addUnit(){const s=$('#sn').value.trim();if(!/^[A-Za-z0-9_-]{3,40}$/.test(s))return alert('Use 3-40 letters, numbers, - or _');const{error}=await sb.from('units').insert({serial:s});error?alert(error.message):admin()}
+async function delUnit(k){if(!confirm('Delete '+k+' and its payments?'))return;const{error}=await sb.from('units').delete().eq('serial',k);if(error)alert(error.message);admin()}
+async function approve(id){const{error}=await sb.rpc('approve_payment',{p_id:id});if(error)alert(error.message);admin()}
+async function reject(id){if(!confirm('Reject this payment?'))return;await sb.from('payments').update({status:'rejected',decided_at:new Date().toISOString()}).eq('id',id);admin()}
+async function setExp(k){const v=document.getElementById('d-'+k).value;if(!v)return;await sb.from('units').update({expires_at:new Date(v).toISOString(),activated:true}).eq('serial',k);admin()}
+function dl(k){const cv=document.querySelector('#q-'+CSS.escape(k)+' canvas'),a=document.createElement('a');a.href=cv.toDataURL('image/png');a.download='QR-'+k+'.png';a.click()}
+window.addEventListener('hashchange',route);route();
+</script></body></html>
