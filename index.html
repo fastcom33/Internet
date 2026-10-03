@@ -18,7 +18,7 @@ h1{font-size:1.4rem;margin:8px 0}h2{font-size:1.1rem;margin:0 0 8px}
 .pk.on{border-color:var(--p);background:rgba(37,99,235,.1)}.pk b{font-size:1.2rem;display:block}
 button.b,a.b{background:var(--p);color:#fff;border:0;border-radius:8px;padding:10px 14px;font:inherit;cursor:pointer;text-decoration:none;display:inline-block}
 button.s,a.s{background:transparent;color:var(--t);border:1px solid var(--b)}
-input{width:100%;padding:9px;border:1px solid var(--b);border-radius:8px;background:var(--bg);color:var(--t);font:inherit;margin:4px 0 8px}
+input,textarea,select{width:100%;padding:9px;border:1px solid var(--b);border-radius:8px;background:var(--bg);color:var(--t);font:inherit;margin:4px 0 8px}
 .tag{padding:2px 8px;border-radius:99px;font-size:.8rem}.ok{background:#dcfce7;color:#166534}.no{background:#fee2e2;color:#991b1b}
 .ov{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:.9rem}td,th{padding:6px;border-bottom:1px solid var(--b);text-align:left;vertical-align:middle}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
@@ -30,17 +30,19 @@ const SUPABASE_KEY='sb_publishable_OIznls2GWgp9N8QcO6-mtw_7UZ4N5wq';
 const CFG={biz:'Unlimited Home Internet',accName:'Fast Communication Sdn Bhd',wa:'https://wa.me/message/63F46RCL57PHJ1',qrImg:'payqr.png'};
 const INSTALL=80,DEPOSIT=250; // display only; the server calculates the real amount
 /* ================================= */
-let sb=null,PK=[],sel=0;
+let sb=null,PK=[],sel=0,LASTCMD='';
 try{if(SUPABASE_URL.startsWith('https://'))sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY)}catch(e){}
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt=t=>t?new Date(t).toLocaleString('en-MY',{dateStyle:'medium',timeStyle:'short'}):'-';
+const wa=n=>{let d=String(n||'').replace(/\D/g,'');if(d.startsWith('0'))d='6'+d;return 'https://wa.me/'+d};
 const msg=t=>$('#app').innerHTML=`<h1>${esc(CFG.biz)}</h1><div class="card">${t}</div>`;
 
 async function route(){const h=location.hash;
  if(!h||h==='#'||h==='#/')return location.replace('promo.html');
  if(!sb)return msg('Website not configured yet: Supabase keys are missing in index.html.');
  if(!PK.length){const{data}=await sb.from('packages').select('*').order('idx');PK=(data||[]).map(x=>({n:x.name,p:Number(x.price),d:x.days,m:x.months}))}
+ if(h==='#/install')return installForm();
  const m=h.match(/^#\/u\/(.+)$/);
  if(m)return customer(decodeURIComponent(m[1]));
  if(h==='#/admin')return admin();
@@ -54,16 +56,14 @@ async function customer(sn){
  const{data:u}=await sb.rpc('get_unit',{p_serial:sn});
  if(!u)return msg(`Unit <b>${esc(sn)}</b> not found. Please contact us on <a href="${esc(CFG.wa)}">WhatsApp</a>.`);
  const exp=u.expires_at?new Date(u.expires_at).getTime():0,active=exp>Date.now();
- const left=7*864e5-(Date.now()-new Date(u.created_at).getTime()),win=left>0;
- const k=PK[sel],waive=!u.activated&&win&&k.m>=12;
- const fees=u.activated?0:(waive?0:INSTALL)+DEPOSIT,tot=k.p+fees;
+ const k=PK[sel],rbEnd=u.installed_at?new Date(u.installed_at).getTime()+7*864e5:0,rbOpen=!u.rebate_used&&rbEnd>Date.now(),rb=rbOpen&&k.m>=12?80:0,tot=k.p-rb;
  $('#app').innerHTML=`<h1>${esc(CFG.biz)}</h1>
  <div class="card"><h2>Unit: ${esc(sn)}</h2>Status: <span class="tag ${active?'ok':'no'}">${active?'Active':'Expired / Not active'}</span><br>
  <span class="m">Valid until: ${fmt(u.expires_at)}</span>${u.pending>0?'<p class="m">Payment awaiting confirmation…</p>':''}</div>
  <div class="card"><h2>1. Choose package</h2><div class="g">${PK.map((x,i)=>`<button class="pk ${i===sel?'on':''}" onclick="sel=${i};route()"><span class="m">${esc(x.n)}</span><b>RM${x.p}</b></button>`).join('')}</div>
- ${u.activated?'':`<p class="m">First-time setup: installation ${waive?`<s>RM${INSTALL}</s> <b>FREE</b>`:`RM${INSTALL} (non-refundable)`} + modem deposit RM${DEPOSIT} (refundable) = RM${fees}</p>
- ${!waive&&win?`<p class="tag ok">Choose 12 months or more within ${Math.ceil(left/864e5)} day(s) to waive the RM${INSTALL} installation fee!</p>`:''}`}
- <h2 style="margin-top:12px">Total: RM${tot}</h2></div>
+ ${u.activated?'':`<p class="m">New customer? The installation fee (RM80, non-refundable) and modem deposit (RM250, refundable) are collected at installation, not here. <a href="#/install">Request installation</a></p>`}
+ ${rbOpen?`<p class="tag ok">RM80 installation rebate: buy a 12-month or longer package before ${fmt(rbEnd)} and pay RM80 less.</p>`:''}
+ <h2 style="margin-top:12px">Total: RM${tot}${rb?` <span class="m">(RM${k.p} − RM${rb} rebate)</span>`:''}</h2></div>
  <div class="card"><h2>2. Pay by QR</h2><p>Scan this DuitNow / TNG QR with your banking or e-wallet app and pay <b>RM${tot}</b> to <b>${esc(CFG.accName)}</b>.</p>
  <img src="${CFG.qrImg}" alt="Payment QR" style="max-width:260px;width:100%;display:block;margin:8px auto" onerror="this.style.display='none'">
  <p><b>IMPORTANT:</b> in the payment <b>remark / note / reference</b> box of your app, type your unit no.: <b style="font-size:1.15rem">${esc(sn)}</b> <button class="b s" style="padding:4px 10px" data-sn="${esc(sn)}" onclick="navigator.clipboard&&navigator.clipboard.writeText(this.dataset.sn);this.textContent='Copied'">Copy</button></p>
@@ -76,6 +76,22 @@ async function submitPay(sn){const b=$('#pb');b.disabled=true;
  const{data,error}=await sb.rpc('submit_payment',{p_serial:sn,p_pkg:sel,p_payer:$('#nm').value,p_ref:$('#rf').value,p_referred_by:$('#rf2').value.trim()});
  b.disabled=false;if(error)return alert(error.message);
  alert('Thank you! Please make sure you paid RM'+data.amount+'. We will activate your service after verifying your payment.');route()}
+
+/* ---------- installation request ---------- */
+function installForm(){
+ $('#app').innerHTML=`<h1>Request installation</h1><div class="card"><p>Fill in your details. We will contact you on WhatsApp to confirm the installation date.</p>
+ <input id="in_n" placeholder="Full name"><input id="in_p" type="tel" placeholder="WhatsApp / phone no. e.g. 0123456789">
+ <textarea id="in_a" rows="3" placeholder="Installation address"></textarea><input id="in_t" placeholder="Preferred date / time (optional)">
+ <select id="in_k"><option value="">Package you are interested in (optional)</option>${PK.map(x=>`<option>${esc(x.n)}</option>`).join('')}</select>
+ <textarea id="in_x" rows="2" placeholder="Notes (optional)"></textarea>
+ <label style="display:flex;gap:8px;align-items:flex-start;margin:8px 0"><input type="checkbox" id="in_g" style="width:auto;margin-top:4px"><span class="m">I agree to the installation. I understand that the installation fee (RM${INSTALL}, non-refundable; I get an RM80 rebate on a 12-month or longer package bought within 7 days after the installation is confirmed) and the modem deposit (RM${DEPOSIT}, refundable when I return the modem) are collected at installation, and I agree to the <a href="terms.html" target="_blank">Terms &amp; Conditions</a>.</span></label>
+ <button class="b" id="ib" onclick="submitInstall()">Submit request</button> <a class="b s" href="promo.html">Back</a></div>`}
+async function submitInstall(){
+ if(!$('#in_g').checked)return alert('Please tick the box to agree.');
+ const b=$('#ib');b.disabled=true;
+ const{error}=await sb.rpc('submit_install_request',{p_name:$('#in_n').value.trim(),p_phone:$('#in_p').value.trim(),p_address:$('#in_a').value.trim(),p_preferred:$('#in_t').value.trim(),p_package:$('#in_k').value,p_notes:$('#in_x').value.trim(),p_agreed:true});
+ b.disabled=false;if(error)return alert(error.message);
+ msg('Thank you! We have received your request and will contact you on WhatsApp to confirm the installation date.<br><br><a class="b s" href="promo.html">Back to packages</a>')}
 
 /* ---------- camera scanner ---------- */
 function scanner(){$('#app').innerHTML=`<h1>Scan modem QR</h1><div class="card"><video id="v" playsinline muted style="width:100%;border-radius:10px"></video><p class="m" id="sm">Point the camera at the QR sticker on your modem.</p><p><label class="b" style="cursor:pointer">Choose QR picture from my photos<input type="file" accept="image/*" id="fi" hidden></label></p><a class="b s" href="#">Cancel</a></div>`;
@@ -96,26 +112,45 @@ function scanner(){$('#app').innerHTML=`<h1>Scan modem QR</h1><div class="card">
 async function admin(){
  const{data:{session}}=await sb.auth.getSession();
  if(!session){$('#app').innerHTML=`<h1>Admin login</h1><div class="card"><input id="em" type="email" placeholder="Email"><input id="pw" type="password" placeholder="Password"><button class="b" onclick="login()">Login</button> <a class="b s" href="#">Back</a></div>`;return}
- const[pp,uu]=await Promise.all([sb.from('payments').select('*').eq('status','pending').order('created_at'),sb.from('units').select('*').order('created_at',{ascending:false})]);
- const pend=pp.data||[],units=uu.data||[],base=location.href.split('#')[0];
+ const[pp,uu,ir]=await Promise.all([sb.from('payments').select('*').eq('status','pending').order('created_at'),sb.from('units').select('*').order('created_at',{ascending:false}),sb.from('install_requests').select('*').order('created_at',{ascending:false}).limit(50)]);
+ const pend=pp.data||[],units=uu.data||[],rq=ir.data||[],base=location.href.split('#')[0];
  $('#app').innerHTML=`<h1>Admin</h1><div class="row"><a class="b s" href="#">Home</a><button class="b s" onclick="logout()">Logout</button></div>
+ ${LASTCMD?`<div class="card"><h2>Load into MikroTik</h2><p class="m">Open Winbox, then New Terminal. Paste this and press Enter. The website picks up the new expiry from the router within 5 minutes.</p><textarea id="cmd" rows="${LASTCMD.split('\n').length+1}" readonly>${esc(LASTCMD)}</textarea><button class="b" onclick="navigator.clipboard&&navigator.clipboard.writeText($('#cmd').value);this.textContent='Copied'">Copy</button> <button class="b s" onclick="LASTCMD='';admin()">Done</button></div>`:''}
  <div class="card"><h2>Pending payments (${pend.length})</h2><div class="ov"><table><tr><th>Unit (remark)</th><th>Package</th><th>RM</th><th>Payer / ref</th><th>Time</th><th></th></tr>
- ${pend.map(p=>`<tr><td><b>${esc(p.serial)}</b></td><td>${esc((PK[p.pkg_idx]||{}).n)}</td><td>${p.amount}</td><td>${esc(p.payer)} ${esc(p.ref)}${p.referred_by?'<br><span class="m">Referred by '+esc(p.referred_by)+'</span>':''}</td><td>${fmt(p.created_at)}</td>
+ ${pend.map(p=>`<tr><td><b>${esc(p.serial)}</b></td><td>${esc((PK[p.pkg_idx]||{}).n)}</td><td>${p.amount}${p.rebate>0?'<br><span class="m">incl. RM'+p.rebate+' rebate</span>':''}</td><td>${esc(p.payer)} ${esc(p.ref)}${p.referred_by?'<br><span class="m">Referred by '+esc(p.referred_by)+'</span>':''}</td><td>${fmt(p.created_at)}</td>
  <td><button class="b" onclick="approve(${p.id})">Approve</button> <button class="b s" onclick="reject(${p.id})">Reject</button></td></tr>`).join('')||'<tr><td colspan=6 class="m">None</td></tr>'}</table></div></div>
+ <div class="card"><h2>Installation requests (${rq.filter(r=>r.status!=='installed').length} open)</h2><div class="ov"><table><tr><th>Customer</th><th>Address / notes</th><th>Status</th><th></th></tr>
+ ${rq.map(r=>`<tr><td><b>${esc(r.name)}</b><br><a href="${wa(r.phone)}" target="_blank">${esc(r.phone)}</a><br><span class="m">${fmt(r.created_at)}</span></td>
+ <td>${esc(r.address)}<br><span class="m">${esc(r.preferred)} ${esc(r.package_interest)} ${esc(r.notes)}</span></td>
+ <td><span class="tag ${r.status==='installed'?'ok':'no'}">${esc(r.status)}</span>${r.installed_at?'<br><span class="m">'+fmt(r.installed_at)+'</span>':''}</td>
+ <td><button class="b s" onclick="setInstall(${r.id},'contacted')">Contacted</button> <button class="b s" onclick="setInstall(${r.id},'scheduled')">Scheduled</button> <button class="b" onclick="setInstall(${r.id},'installed')">Installed</button> <button class="b s" onclick="delInstall(${r.id})">Delete</button></td></tr>`).join('')||'<tr><td colspan=4 class="m">None</td></tr>'}</table></div></div>
  <div class="card"><h2>Add modem unit</h2><div class="row"><input id="sn" placeholder="Unit no. e.g. RT-7K2M9Q" style="flex:1"><button class="b s" onclick="gen()">Random</button><button class="b" onclick="addUnit()">Add &amp; make QR</button></div>
  <p class="m">Use a random unit no. so others cannot guess other customers' units.</p></div>
- <div class="card"><h2>Units (${units.length})</h2>
+ <div class="card"><h2>Units (${units.length})</h2><p class="m">Router sync: ${units.reduce((m,u)=>u.synced_at&&u.synced_at>m?u.synced_at:m,'')?fmt(units.reduce((m,u)=>u.synced_at&&u.synced_at>m?u.synced_at:m,'')):'not yet'}</p>
  ${units.map(u=>`<div class="row" style="border-bottom:1px solid var(--b);padding:8px 0"><div id="q-${esc(u.serial)}"></div><div style="flex:1"><b>${esc(u.serial)}</b>
- <span class="tag ${u.expires_at&&new Date(u.expires_at)>new Date()?'ok':'no'}">${u.expires_at&&new Date(u.expires_at)>new Date()?'Active':'Inactive'}</span><br><span class="m">Expiry: ${fmt(u.expires_at)} &middot; Referrals: ${u.refs}</span><br>
+ <span class="tag ${u.expires_at&&new Date(u.expires_at)>new Date()?'ok':'no'}">${u.expires_at&&new Date(u.expires_at)>new Date()?'Active':'Inactive'}</span><br><span class="m">Expiry: ${fmt(u.expires_at)} &middot; Referrals: ${u.refs}${u.installed_at?' &middot; Installed '+fmt(u.installed_at)+(u.rebate_used?' (rebate used)':''):''}</span><br>
  <input type="datetime-local" id="d-${esc(u.serial)}" style="width:auto"> <button class="b s" onclick="setExp('${esc(u.serial)}')">Set expiry (manual)</button><br>
- <button class="b s" onclick="dl('${esc(u.serial)}')">Download QR</button> <button class="b s" onclick="delUnit('${esc(u.serial)}')">Delete</button></div></div>`).join('')}</div>`;
+ <button class="b s" onclick="showCmd('${esc(u.serial)}')">Router command</button> <button class="b s" onclick="setInstalled('${esc(u.serial)}')">Installation confirmed</button> <button class="b s" onclick="dl('${esc(u.serial)}')">Download QR</button> <button class="b s" onclick="delUnit('${esc(u.serial)}')">Delete</button></div></div>`).join('')}</div>`;
  units.forEach(u=>new QRCode(document.getElementById('q-'+u.serial),{text:base+'#/u/'+encodeURIComponent(u.serial),width:110,height:110}))}
+async function setInstall(id,st){const u={status:st};if(st==='installed')u.installed_at=new Date().toISOString();const{error}=await sb.from('install_requests').update(u).eq('id',id);if(error)alert(error.message);admin()}
+async function delInstall(id){if(!confirm('Delete this request?'))return;await sb.from('install_requests').delete().eq('id',id);admin()}
+async function setInstalled(k){if(!confirm('Confirm installation for '+k+' and start the 7-day RM80 rebate window now?'))return;const{error}=await sb.from('units').update({installed_at:new Date().toISOString()}).eq('serial',k);if(error)alert(error.message);admin()}
 async function login(){const{error}=await sb.auth.signInWithPassword({email:$('#em').value,password:$('#pw').value});error?alert(error.message):admin()}
 async function logout(){await sb.auth.signOut();admin()}
 function gen(){$('#sn').value='RT-'+Array.from(crypto.getRandomValues(new Uint8Array(6)),b=>'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[b%32]).join('')}
 async function addUnit(){const s=$('#sn').value.trim();if(!/^[A-Za-z0-9_-]{3,40}$/.test(s))return alert('Use 3-40 letters, numbers, - or _');const{error}=await sb.from('units').insert({serial:s});error?alert(error.message):admin()}
 async function delUnit(k){if(!confirm('Delete '+k+' and its payments?'))return;const{error}=await sb.from('units').delete().eq('serial',k);if(error)alert(error.message);admin()}
-async function approve(id){const{error}=await sb.rpc('approve_payment',{p_id:id});if(error)alert(error.message);admin()}
+function rcmd(k,iso){const d=new Date(iso).toLocaleString('sv-SE',{timeZone:'Asia/Kuala_Lumpur',hourCycle:'h23'}).replace(/\D/g,'').slice(0,12);return `/ppp secret set [find name="${k}"] comment="exp=${d}" disabled=no`}
+async function showCmd(k){const{data}=await sb.from('units').select('expires_at').eq('serial',k).single();if(!data||!data.expires_at)return alert('This unit has no expiry yet.');LASTCMD=rcmd(k,data.expires_at);admin();window.scrollTo(0,0)}
+async function approve(id){
+ const{data:p}=await sb.from('payments').select('serial,referred_by').eq('id',id).single();if(!p)return alert('Payment not found');
+ const ids=[p.serial,p.referred_by].filter(Boolean);
+ const get=async()=>{const{data}=await sb.from('units').select('serial,expires_at').in('serial',ids);return Object.fromEntries((data||[]).map(x=>[x.serial,x.expires_at]))};
+ const before=await get();
+ const{error}=await sb.rpc('approve_payment',{p_id:id});if(error){alert(error.message);return admin()}
+ const after=await get();
+ LASTCMD=ids.filter(k=>after[k]&&after[k]!==before[k]).map(k=>rcmd(k,after[k])).join('\n');
+ admin();window.scrollTo(0,0)}
 async function reject(id){if(!confirm('Reject this payment?'))return;await sb.from('payments').update({status:'rejected',decided_at:new Date().toISOString()}).eq('id',id);admin()}
 async function setExp(k){const v=document.getElementById('d-'+k).value;if(!v)return;await sb.from('units').update({expires_at:new Date(v).toISOString(),activated:true}).eq('serial',k);admin()}
 function dl(k){const cv=document.querySelector('#q-'+CSS.escape(k)+' canvas'),a=document.createElement('a');a.href=cv.toDataURL('image/png');a.download='QR-'+k+'.png';a.click()}
