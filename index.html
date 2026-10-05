@@ -5,6 +5,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/barcode-detector@3/dist/iife/ponyfill.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
 <style>
 :root{--bg:#f6f7fb;--c:#fff;--t:#1b1f2a;--m:#6b7280;--p:#2563eb;--b:#e5e7eb}
@@ -48,6 +49,8 @@ async function route(){const h=location.hash;
  const m=h.match(/^#\/u\/(.+)$/);
  if(m)return customer(decodeURIComponent(m[1]));
  if(h==='#/admin')return admin();
+ if(h==='#/register')return register(false);
+ if(h==='#/installer')return register(true);
  if(h==='#/scan')return scanner();
  home()}
 function home(){$('#app').innerHTML=`<h1>${esc(CFG.biz)}</h1><div class="card"><p>Scan the QR sticker on your modem to check your account or top up.</p><a class="b" href="#/scan">Scan modem QR with camera</a></div><p class="m"><a href="promo.html">Packages &amp; promotions</a> &middot; <a href="terms.html">Terms</a> &middot; <a href="#/admin">Admin</a></p>`}
@@ -96,26 +99,28 @@ async function submitInstall(){
  msg('Thank you! We have received your request and will contact you on WhatsApp to confirm the installation date.<br><br><a class="b s" href="promo.html">Back to packages</a>')}
 
 /* ---------- camera scanner ---------- */
-function scanner(){$('#app').innerHTML=`<h1>Scan modem QR</h1><div class="card"><video id="v" playsinline muted style="width:100%;border-radius:10px"></video><p class="m" id="sm">Point the camera at the QR sticker on your modem.</p><p><label class="b" style="cursor:pointer">Choose QR picture from my photos<input type="file" accept="image/*" id="fi" hidden></label></p><a class="b s" href="#">Cancel</a></div>`;
- let st,stop=false;const v=$('#v'),cv=document.createElement('canvas'),cx=cv.getContext('2d',{willReadFrequently:true});
- const end=()=>{stop=true;st&&st.getTracks().forEach(t=>t.stop())};
- window.addEventListener('hashchange',end,{once:true});
- $('#fi').onchange=e=>{const f=e.target.files[0];if(!f)return;const img=new Image();
-  img.onload=()=>{const sc=Math.min(1,1600/Math.max(img.width,img.height)),c=document.createElement('canvas');c.width=Math.round(img.width*sc);c.height=Math.round(img.height*sc);
-   const x=c.getContext('2d');x.drawImage(img,0,0,c.width,c.height);const d=x.getImageData(0,0,c.width,c.height);
-   const r=window.jsQR&&jsQR(d.data,d.width,d.height,{inversionAttempts:'attemptBoth'});URL.revokeObjectURL(img.src);
-   const m=r&&r.data.match(/#\/u\/(.+)$/);if(m){end();location.hash='#/u/'+m[1]}else $('#sm').textContent='No valid modem QR found in that picture. Try a clearer or cropped picture.'};
-  img.onerror=()=>{$('#sm').textContent='Could not read that picture.'};img.src=URL.createObjectURL(f)};
- function tick(){if(stop)return;if(v.readyState>=2&&v.videoWidth){cv.width=v.videoWidth;cv.height=v.videoHeight;cx.drawImage(v,0,0);const d=cx.getImageData(0,0,cv.width,cv.height),r=window.jsQR&&jsQR(d.data,d.width,d.height);
-  if(r&&r.data){const m=r.data.match(/#\/u\/(.+)$/);if(m){end();location.hash='#/u/'+m[1];return}$('#sm').textContent='Not a valid modem QR code.'}}requestAnimationFrame(tick)}
- navigator.mediaDevices&&navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}}).then(s=>{st=s;v.srcObject=s;v.play();tick()}).catch(()=>{$('#sm').textContent='Camera not available. Allow camera access (https required) or use your phone camera app.'})}
+function scanner(){$('#app').innerHTML=`<h1>Scan modem QR</h1><div class="card"><video id="v" playsinline muted style="width:100%;border-radius:10px"></video><p class="m" id="sm">Point the camera at the QR sticker on your modem. Hold 15–25 cm away and keep still.</p>
+ <div class="row"><button class="b" id="snap" onclick="custSnap()">Take sharp photo</button><label class="b s" style="cursor:pointer">Choose QR picture from my photos<input type="file" accept="image/*" id="fi" hidden></label><a class="b s" href="#">Cancel</a></div></div>`;
+ const v=$('#v'),say=t=>{const e=$('#sm');if(e)e.textContent=t};
+ const go=codes=>{const hit=codes.map(t=>String(t).match(/#\/u\/(.+)$/)).find(Boolean);if(hit){camStop();location.hash='#/u/'+hit[1].trim();return true}return false};
+ window.custGo=go;window.custSay=say;
+ window.addEventListener('hashchange',camStop,{once:true});
+ $('#fi').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;say('Reading the picture …');
+  try{const bmp=await createImageBitmap(f,{imageOrientation:'from-image'}).catch(()=>createImageBitmap(f)),codes=await readAll(toCanvas(bmp,3200),true);
+   if(!go(codes))say(codes.length?'That QR is not a modem QR from us.':'No QR found in that picture. Try a closer, sharper picture where the QR fills most of the photo, or use the camera.')}
+  catch(err){say('Could not read that picture.')}};
+ camOpen(v).then(st=>{SC.st=st;SC.run=true;SC.pause=false;camLoop(v,codes=>{if(!go(codes))say('Not a valid modem QR code.')})})
+  .catch(()=>say('Camera not available. Allow camera access (https required), or choose a QR picture from your photos.'))}
+async function custSnap(){const v=$('#v');if(!v||!SC.st)return;SC.pause=true;custSay('Taking a sharp photo, keep still …');
+ try{const codes=await readAll(toCanvas(await stillOf(v),3200),true);if(!custGo(codes))custSay(codes.length?'That QR is not a modem QR from us.':'No QR found. Move closer so the QR fills about half of the screen, then try again.')}catch(e){custSay('Could not take the photo.')}SC.pause=false}
 
 /* ---------- admin ---------- */
 async function admin(){
  const{data:{session}}=await sb.auth.getSession();
+ if(session){const{data:rl}=await sb.rpc('my_role');if(rl==='installer')return location.hash='#/installer';if(rl!=='admin'){$('#app').innerHTML=`<h1>No access</h1><div class="card"><p>This login is not an admin login.</p><button class="b s" onclick="logout()">Logout</button></div>`;return}}
  if(!session){$('#app').innerHTML=`<h1>Admin login</h1><div class="card"><input id="em" type="email" placeholder="Email"><input id="pw" type="password" placeholder="Password"><button class="b" onclick="login()">Login</button> <a class="b s" href="#">Back</a></div>`;return}
- const[pp,uu,ir]=await Promise.all([sb.from('payments').select('*').eq('status','pending').order('created_at'),sb.from('units').select('*').order('created_at',{ascending:false}),sb.from('install_requests').select('*').order('created_at',{ascending:false}).limit(50)]);
- const pend=pp.data||[],units=uu.data||[],rq=ir.data||[],base=location.href.split('#')[0];window.UNITSET=new Set(units.map(u=>u.serial));
+ const[pp,uu,ir,ins]=await Promise.all([sb.from('payments').select('*').eq('status','pending').order('created_at'),sb.from('units').select('*').order('created_at',{ascending:false}),sb.from('install_requests').select('*').order('created_at',{ascending:false}).limit(50),sb.from('installers').select('*').order('created_at')]);
+ const pend=pp.data||[],units=uu.data||[],rq=ir.data||[],instl=ins.data||[],base=location.href.split('#')[0];window.UNITSET=new Set(units.map(u=>u.serial));
  $('#app').innerHTML=`<h1>Admin</h1><div class="row"><a class="b s" href="#">Home</a><button class="b s" onclick="logout()">Logout</button></div>
  ${LASTCMD?`<div class="card"><h2>Load into MikroTik</h2><p class="m">Open Winbox, then New Terminal. Paste this and press Enter. Validity starts when the customer's modem first connects. The website then shows the router's real end date within 5 minutes.</p><textarea id="cmd" rows="${LASTCMD.split('\n').length+1}" readonly>${esc(LASTCMD)}</textarea><button class="b" onclick="navigator.clipboard&&navigator.clipboard.writeText($('#cmd').value);this.textContent='Copied'">Copy</button> <button class="b s" onclick="LASTCMD='';admin()">Done</button></div>`:''}
  <div class="card"><h2>Pending payments (${pend.length})</h2><div class="ov"><table><tr><th>Unit (remark)</th><th>Package</th><th>RM</th><th>Payer / ref</th><th>Time</th><th></th></tr>
@@ -126,20 +131,27 @@ async function admin(){
  <td>${esc(r.address)}<br><span class="m">${esc(r.preferred)} ${esc(r.package_interest)} ${esc(r.notes)}</span></td>
  <td><span class="tag ${r.status==='installed'?'ok':'no'}">${esc(r.status)}</span>${r.installed_at?'<br><span class="m">'+fmt(r.installed_at)+'</span>':''}</td>
  <td><button class="b s" onclick="setInstall(${r.id},'contacted')">Contacted</button> <button class="b s" onclick="setInstall(${r.id},'scheduled')">Scheduled</button> <button class="b" onclick="setInstall(${r.id},'installed')">Installed</button> <button class="b s" onclick="delInstall(${r.id})">Delete</button></td></tr>`).join('')||'<tr><td colspan=4 class="m">None</td></tr>'}</table></div></div>
- <div class="card"><h2>Add modem units</h2><textarea id="sn" rows="4" placeholder="One modem per line: MAC, unit no, name, phone&#10;e.g. AA:BB:CC:DD:EE:FF, A-12-03, Ali, 0123456789&#10;(only the MAC is required)"></textarea><button class="b" onclick="addUnit()">Add &amp; make QR</button> <button class="b s" onclick="printLabels()">Print all QR labels</button>
+ <div class="card"><h2>Installers (${instl.length})</h2><p class="m">Installers use <b>${esc(base)}#/installer</b>. They can only register modems and customer details. Step 1: add their email here. Step 2: create the same email + a password in Supabase (Authentication, Users, Add user).</p>
+ <div class="row"><input id="ie" type="email" placeholder="Installer email" style="flex:1;margin:0"><button class="b" onclick="addInstaller()">Add installer</button></div>
+ ${instl.map(x=>`<div class="row" style="border-bottom:1px solid var(--b);padding:6px 0"><span style="flex:1">${esc(x.email)}</span><button class="b s" onclick="delInstaller('${esc(x.email)}')">Remove</button></div>`).join('')}</div>
+ <div class="card"><h2>Add modem units</h2><p><a class="b" href="#/register">Register modems one by one: scan + customer name, contact, unit no.</a></p><textarea id="sn" rows="4" placeholder="One modem per line: MAC, unit no, name, phone&#10;e.g. AA:BB:CC:DD:EE:FF, A-12-03, Ali, 0123456789&#10;(only the MAC is required)"></textarea><button class="b" onclick="addUnit()">Add &amp; make QR</button> <button class="b s" onclick="printLabels()">Print all QR labels</button>
  <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--b)"><h2>Capture MACs by scanning (bulk)</h2>
  <p class="m">Scan the MAC barcodes or QR on the modem boxes / carton label. Each MAC is added to the box above automatically (no duplicates). A USB or Bluetooth barcode scanner also works: click in the box above and scan, it types the MAC for you.</p>
- <div class="row"><button class="b" id="sc1" onclick="scStart()">Scan with camera</button><label class="b s" style="cursor:pointer">Read from photo(s)<input type="file" accept="image/*" multiple hidden onchange="scFiles([...this.files]);this.value=''"></label><button class="b s" id="sc2" onclick="scStop()" style="display:none">Stop</button></div>
- <input id="scpf" placeholder="Only accept MACs starting with (optional, e.g. 60156F)" style="margin-top:8px">
+ <div class="row"><button class="b" id="sc1" onclick="scStart()">Scan with camera</button><button class="b" id="sc3" onclick="scSnap()" style="display:none">Take sharp photo</button><label class="b s" style="cursor:pointer">Read from photo(s)<input type="file" accept="image/*" multiple hidden onchange="scFiles([...this.files]);this.value=''"></label><button class="b s" id="sc2" onclick="scStop()" style="display:none">Stop</button></div>
+ <select id="scmode" style="margin-top:8px"><option value="mac">Capture MAC only (ignore serial numbers)</option><option value="both">Capture MAC and also save the serial number (SN)</option></select>
+ <input id="scpf" placeholder="Only accept MACs starting with (optional, e.g. 60156F)">
+ <p class="m">Tip: the big "SN&amp;MAC" QR on the carton label holds all 12 modems. Fill the screen with that one QR, hold still, and press "Take sharp photo". Saving the serial number needs the updated SQL (supabase_ALL_IN_ONE.sql run again).</p>
  <video id="scv" playsinline muted style="width:100%;border-radius:10px;margin-top:8px;display:none"></video>
  <p class="m" id="scs"></p></div>
  <p class="m">The QR code uses the modem MAC address (any format is accepted). Unit no., name and phone can also be added or edited later in the unit list below.</p></div>
  <div class="card"><h2>Units (${units.length})</h2><input id="us" placeholder="Search MAC / unit / name / phone" oninput="filterUnits()"><p class="m">Router sync: ${units.reduce((m,u)=>u.synced_at&&u.synced_at>m?u.synced_at:m,'')?fmt(units.reduce((m,u)=>u.synced_at&&u.synced_at>m?u.synced_at:m,'')):'not yet'}</p>
  ${units.map(u=>`<div class="row ur" data-s="${esc((u.serial+' '+(u.unit_no||'')+' '+(u.cust_name||'')+' '+(u.cust_phone||'')).toLowerCase())}" style="border-bottom:1px solid var(--b);padding:8px 0"><div id="q-${esc(u.serial)}"></div><div style="flex:1"><b>${esc(u.serial)}</b>
- <span class="tag ${(u.activated&&!u.started)||(u.expires_at&&new Date(u.expires_at)>new Date())?'ok':'no'}">${u.activated&&!u.started?'Paid, waiting to start':u.expires_at&&new Date(u.expires_at)>new Date()?'Active':'Inactive'}</span><br><span class="m">Expiry: ${fmt(u.expires_at)} &middot; Referrals: ${u.refs}${u.installed_at?' &middot; Installed '+fmt(u.installed_at)+(u.rebate_used?' (rebate used)':''):''}</span><br>
+ <span class="tag ${(u.activated&&!u.started)||(u.expires_at&&new Date(u.expires_at)>new Date())?'ok':'no'}">${u.activated&&!u.started?'Paid, waiting to start':u.expires_at&&new Date(u.expires_at)>new Date()?'Active':'Inactive'}</span><br><span class="m">Expiry: ${fmt(u.expires_at)} &middot; Referrals: ${u.refs}${u.modem_sn?' &middot; SN '+esc(u.modem_sn):''}${u.installed_at?' &middot; Installed '+fmt(u.installed_at)+(u.rebate_used?' (rebate used)':''):''}</span><br>
  <span class="row" style="margin:4px 0"><input id="un-${esc(u.serial)}" placeholder="Unit no." value="${esc(u.unit_no||'')}" style="width:110px;margin:0"><input id="nm-${esc(u.serial)}" placeholder="Name" value="${esc(u.cust_name||'')}" style="width:150px;margin:0"><input id="ph-${esc(u.serial)}" placeholder="Phone" value="${esc(u.cust_phone||'')}" style="width:130px;margin:0"><button class="b s" onclick="saveDet('${esc(u.serial)}')">Save details</button></span><br><input type="datetime-local" id="d-${esc(u.serial)}" style="width:auto"> <button class="b s" onclick="setExp('${esc(u.serial)}')">Set expiry (manual)</button><br>
  <button class="b s" onclick="showCmd('${esc(u.serial)}')">Router command (last package)</button> <button class="b s" onclick="setInstalled('${esc(u.serial)}')">Installation confirmed</button> <button class="b s" onclick="dl('${esc(u.serial)}')">Download QR</button> <button class="b s" onclick="delUnit('${esc(u.serial)}')">Delete</button></div></div>`).join('')}</div>`;
  units.forEach(u=>new QRCode(document.getElementById('q-'+u.serial),{text:base+'#/u/'+encodeURIComponent(u.serial),width:110,height:110}))}
+async function addInstaller(){const e=$('#ie').value.trim().toLowerCase();if(!/^\S+@\S+\.\S+$/.test(e))return alert('Enter a valid email');const{error}=await sb.from('installers').insert({email:e});error?alert(error.message):admin()}
+async function delInstaller(e){if(!confirm('Remove installer '+e+'? Also delete their login in Supabase (Authentication, Users).'))return;await sb.from('installers').delete().eq('email',e);admin()}
 async function setInstall(id,st){const u={status:st};if(st==='installed')u.installed_at=new Date().toISOString();const{error}=await sb.from('install_requests').update(u).eq('id',id);if(error)alert(error.message);admin()}
 async function delInstall(id){if(!confirm('Delete this request?'))return;await sb.from('install_requests').delete().eq('id',id);admin()}
 async function setInstalled(k){if(!confirm('Confirm installation for '+k+' and start the 7-day RM80 rebate window now?'))return;const{error}=await sb.from('units').update({installed_at:new Date().toISOString()}).eq('serial',k);if(error)alert(error.message);admin()}
@@ -148,51 +160,122 @@ async function logout(){await sb.auth.signOut();admin()}
 function gen(){$('#sn').value='RT-'+Array.from(crypto.getRandomValues(new Uint8Array(6)),b=>'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[b%32]).join('')}
 function normId(s){s=s.trim();const h=s.replace(/[:.\-\s]/g,'');return /^[0-9a-fA-F]{12}$/.test(h)?h.toUpperCase().match(/.{2}/g).join('-'):s}
 
-/* ---------- bulk MAC capture (camera / photo / barcode) ---------- */
-const SC={seen:new Set(),n:0,dup:0,run:false,st:null,bd:null,rd:null};
+/* ---------- code reading engine (camera / photo / barcode / QR) ---------- */
+const SC={seen:new Set(),n:0,dup:0,run:false,st:null,rd:null,pause:false};
+let ENGS=null;
+async function engines(){if(ENGS)return ENGS;const L=[],W=['code_128','code_39','code_93','qr_code','data_matrix','ean_13','itf','codabar'];
+ const mk=async(C,sup)=>{try{let f=W;if(sup){const g=await C.getSupportedFormats();f=W.filter(x=>g.includes(x))}if(f.length)L.push(new C({formats:f}))}catch(e){try{L.push(new C())}catch(e2){}}};
+ if('BarcodeDetector' in window)await mk(window.BarcodeDetector,true);
+ if(window.BarcodeDetectionAPI&&BarcodeDetectionAPI.BarcodeDetector)await mk(BarcodeDetectionAPI.BarcodeDetector,false);
+ return ENGS=L}
 function macFrom(t){const o=[];String(t||'').toUpperCase().replace(/(?:[0-9A-F]{2}[:\-.]){5}[0-9A-F]{2}|\b[0-9A-F]{12}\b/g,x=>{const h=x.replace(/[^0-9A-F]/g,'');if(h.length===12)o.push(h.match(/.{2}/g).join('-'));return x});return o}
 function beep(){try{navigator.vibrate&&navigator.vibrate(60);const a=new(window.AudioContext||window.webkitAudioContext)(),o=a.createOscillator();o.frequency.value=880;o.connect(a.destination);o.start();setTimeout(()=>{o.stop();a.close()},90)}catch(e){}}
+function legacyOne(cv){ // old library (single code per image), used only if the new engine is not available
+ let r='';try{if(window.ZXing){if(!SC.rd){const h=new Map(),Z=ZXing,F=Z.BarcodeFormat;h.set(Z.DecodeHintType.POSSIBLE_FORMATS,[F.CODE_128,F.CODE_39,F.CODE_93,F.QR_CODE,F.DATA_MATRIX,F.EAN_13].filter(Boolean));h.set(Z.DecodeHintType.TRY_HARDER,true);const d=new Z.MultiFormatReader();d.setHints(h);SC.rd=d}
+  r=SC.rd.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(cv)))).getText()}}catch(e){}
+ if(!r)try{if(window.jsQR){const d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height),q=jsQR(d.data,d.width,d.height,{inversionAttempts:'attemptBoth'});if(q)r=q.data}}catch(e){}
+ return r}
+function cut(src,sx,sy,w,h,scale){const c=document.createElement('canvas');c.width=Math.round(w*scale);c.height=Math.round(h*scale);c.getContext('2d',{willReadFrequently:true}).drawImage(src,sx,sy,w,h,0,0,c.width,c.height);return c}
+async function readAll(cv,deep){ // returns every code text found in the picture
+ const out=[],E=await engines();
+ const run=async c=>{const n0=out.length;for(const e of E){try{(await e.detect(c)).forEach(x=>x.rawValue&&out.push(x.rawValue))}catch(err){}}if(out.length===n0){const t=legacyOne(c);if(t)out.push(t)}};
+ await run(cv);
+ if((deep||!out.length)&&Math.max(cv.width,cv.height)<2400)await run(cut(cv,0,0,cv.width,cv.height,2)); // dense codes need a bigger picture
+ const W=cv.width,H=cv.height;
+ if(deep||!out.length){ // cut into overlapping tiles and read each (finds more codes, also small ones; enlarges small tiles)
+  const cols=deep?4:2,rows=deep?7:2,tw=Math.round(W/cols*1.4),th=Math.round(H/rows*1.7),sc=Math.max(1,Math.min(2,900/Math.max(tw,th)));
+  for(let r=0;r<rows;r++)for(let q=0;q<cols;q++){const sx=Math.min(Math.max(0,Math.round(q*(W-tw)/Math.max(1,cols-1))),W-tw),sy=Math.min(Math.max(0,Math.round(r*(H-th)/Math.max(1,rows-1))),H-th);await run(cut(cv,sx,sy,tw,th,sc))}}
+ return out}
+async function camOpen(v){const st=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:3840},height:{ideal:2160}}});
+ try{st.getVideoTracks()[0].applyConstraints({advanced:[{focusMode:'continuous'}]}).catch(()=>{})}catch(e){}
+ v.srcObject=st;v.style.display='block';await v.play().catch(()=>{});return st}
+function camLoop(v,onCodes){const cv=document.createElement('canvas'),cx=cv.getContext('2d',{willReadFrequently:true});let busy=false;
+ (async function loop(){if(!SC.run)return;
+  if(!busy&&!SC.pause&&v.readyState>=2&&v.videoWidth){busy=true;const sc=Math.min(1,1920/Math.max(v.videoWidth,v.videoHeight));cv.width=Math.round(v.videoWidth*sc);cv.height=Math.round(v.videoHeight*sc);cx.drawImage(v,0,0,cv.width,cv.height);
+   try{const c=await readAll(cv,false);if(c.length)onCodes(c)}catch(e){}busy=false}
+  setTimeout(loop,100)})()}
+async function stillOf(v){ // sharp full-resolution still picture from the camera
+ try{if(window.ImageCapture&&SC.st){const ic=new ImageCapture(SC.st.getVideoTracks()[0]);return await createImageBitmap(await ic.takePhoto())}}catch(e){}
+ return await createImageBitmap(v)}
+function toCanvas(bmp,max){const sc=Math.min(1,max/Math.max(bmp.width,bmp.height)),c=document.createElement('canvas');c.width=Math.round(bmp.width*sc);c.height=Math.round(bmp.height*sc);c.getContext('2d',{willReadFrequently:true}).drawImage(bmp,0,0,c.width,c.height);return c}
+function camStop(){SC.run=false;SC.pause=false;try{SC.st&&SC.st.getTracks().forEach(t=>t.stop())}catch(e){}SC.st=null}
+
+/* ---------- bulk MAC capture (admin page) ---------- */
 function scMsg(t){const e=$('#scs');if(e)e.textContent=t}
-function scGot(txt){const pf=(($('#scpf')||{}).value||'').replace(/[^0-9A-Fa-f]/g,'').toUpperCase();let add=0;
- macFrom(txt).forEach(m=>{if(pf&&!m.replace(/-/g,'').startsWith(pf))return;if(SC.seen.has(m))return;SC.seen.add(m);
+function pairsFrom(t){ // text of one code -> [{mac, sn}] (a carton QR holds many "SN;MAC" lines)
+ const out=[];String(t||'').split(/\r?\n/).forEach(line=>{const m=macFrom(line);if(!m.length)return;const toks=line.toUpperCase().split(/[;,|&\s]+/).filter(Boolean);
+  const sn=toks.find(x=>/^[0-9A-Z]{6,24}$/.test(x)&&!/^[0-9A-F]{12}$/.test(x)&&!/^([0-9A-F]{2}[:\-.]){5}[0-9A-F]{2}$/.test(x))||null;
+  m.forEach(mac=>out.push({mac,sn:m.length===1?sn:null}))});return out}
+const SNMAP={};
+function scGot(txt){const pf=(($('#scpf')||{}).value||'').replace(/[^0-9A-Fa-f]/g,'').toUpperCase(),both=(($('#scmode')||{}).value==='both');let add=0;
+ pairsFrom(txt).forEach(({mac:m,sn})=>{if(pf&&!m.replace(/-/g,'').startsWith(pf))return;if(both&&sn)SNMAP[m]=sn;if(SC.seen.has(m))return;SC.seen.add(m);
   if(window.UNITSET&&UNITSET.has(m)){SC.dup++;return}
   const ta=$('#sn');if(!ta)return;ta.value=(ta.value.trim()?ta.value.replace(/\s+$/,'')+'\n':'')+m;SC.n++;add++});
  if(add){beep();scMsg('Captured '+SC.n+' new MAC address(es)'+(SC.dup?' ('+SC.dup+' already in the system, skipped)':'')+'. Keep scanning, then press "Add & make QR".')}return add}
-function zxRead(cv){ // one barcode from a canvas (ZXing); returns text or ''
- try{if(!window.ZXing)return '';
-  if(!SC.rd){const h=new Map(),Z=ZXing,F=Z.BarcodeFormat;h.set(Z.DecodeHintType.POSSIBLE_FORMATS,[F.CODE_128,F.CODE_39,F.CODE_93,F.QR_CODE,F.DATA_MATRIX,F.EAN_13].filter(Boolean));h.set(Z.DecodeHintType.TRY_HARDER,true);const r=new Z.MultiFormatReader();r.setHints(h);SC.rd=r}
-  const src=new ZXing.HTMLCanvasElementLuminanceSource(cv),bm=new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(src));return SC.rd.decode(bm).getText()}catch(e){return ''}}
-function qrRead(cv){try{if(!window.jsQR)return '';const d=cv.getContext('2d').getImageData(0,0,cv.width,cv.height),r=jsQR(d.data,d.width,d.height,{inversionAttempts:'attemptBoth'});return r?r.data:''}catch(e){return ''}}
-function tiles(src,cols,rows){ // read many codes in one picture by cutting it into overlapping tiles
- const W=src.width,H=src.height,tw=Math.round(W/cols*1.35),th=Math.round(H/rows*1.6),c=document.createElement('canvas'),x=c.getContext('2d',{willReadFrequently:true});let n=0;
- const one=(sx,sy,w,h)=>{c.width=w;c.height=h;x.drawImage(src,sx,sy,w,h,0,0,w,h);const a=zxRead(c),b=qrRead(c);n+=scGot(a)+scGot(b)};
- one(0,0,W,H);
- for(let r=0;r<rows;r++)for(let q=0;q<cols;q++){const sx=Math.min(Math.max(0,Math.round(q*(W-tw)/Math.max(1,cols-1))),W-tw),sy=Math.min(Math.max(0,Math.round(r*(H-th)/Math.max(1,rows-1))),H-th);one(sx,sy,tw,th)}
- return n}
-async function bdRead(src){try{if(!('BarcodeDetector' in window))return 0;if(!SC.bd){const f=(await BarcodeDetector.getSupportedFormats()).filter(x=>['code_128','code_39','code_93','qr_code','data_matrix','ean_13'].includes(x));if(!f.length)return 0;SC.bd=new BarcodeDetector({formats:f})}
- const r=await SC.bd.detect(src);let n=0;r.forEach(c=>n+=scGot(c.rawValue));return n}catch(e){return 0}}
+async function scImage(cv,label){scMsg('Reading '+label+' …');await new Promise(r=>setTimeout(r,30));const before=SC.n;(await readAll(cv,true)).forEach(scGot);return SC.n-before}
 async function scFiles(files){if(!files||!files.length)return;let tot=0;
- for(const f of files){scMsg('Reading '+f.name+' …');await new Promise(r=>setTimeout(r,30));
-  try{const bmp=await createImageBitmap(f),sc=Math.min(1,3200/Math.max(bmp.width,bmp.height)),c=document.createElement('canvas');c.width=Math.round(bmp.width*sc);c.height=Math.round(bmp.height*sc);c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);
-   tot+=await bdRead(c);tot+=tiles(c,4,7)}catch(e){}}
- scMsg(tot?'Captured '+SC.n+' new MAC address(es) from the photo(s)'+(SC.dup?' ('+SC.dup+' already in the system)':'')+'. Check the list above, then press "Add & make QR".':'No MAC found in the photo(s). Take the photo closer and sharper (one carton label per photo), or scan with the camera, or type the MACs.')}
+ for(const f of files){try{tot+=await scImage(toCanvas(await createImageBitmap(f),3600),f.name)}catch(e){}}
+ scMsg(tot?'Captured '+SC.n+' new MAC address(es) from the photo(s)'+(SC.dup?' ('+SC.dup+' already in the system)':'')+'. Check the list above, then press "Add & make QR".':'No new MAC found in the photo(s). Take the photo closer and sharper (one carton label per photo, good light), or use the camera, or type the MACs.')}
 async function scStart(){if(SC.run)return;const v=$('#scv');
- try{SC.st=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}})}catch(e){return scMsg('Camera not available. Allow camera access (https is required), or use "Read from photo(s)".')}
- try{const t=SC.st.getVideoTracks()[0];t.applyConstraints({advanced:[{focusMode:'continuous'}]}).catch(()=>{})}catch(e){}
- v.srcObject=SC.st;v.style.display='block';await v.play().catch(()=>{});SC.run=true;$('#sc1').style.display='none';$('#sc2').style.display='';scMsg('Hold the camera 15–25 cm from the barcode. It beeps for every new MAC.');
- window.addEventListener('hashchange',scStop,{once:true});
- const cv=document.createElement('canvas'),cx=cv.getContext('2d',{willReadFrequently:true});
- (async function loop(){if(!SC.run)return;
-  if(v.readyState>=2&&v.videoWidth){cv.width=v.videoWidth;cv.height=v.videoHeight;cx.drawImage(v,0,0);
-   const n=await bdRead(cv);if(!n)tiles(cv,3,3)}
-  setTimeout(loop,150)})()}
-function scStop(){SC.run=false;try{SC.st&&SC.st.getTracks().forEach(t=>t.stop())}catch(e){}SC.st=null;const v=$('#scv');if(v){v.style.display='none';v.srcObject=null}const a=$('#sc1'),b=$('#sc2');if(a)a.style.display='';if(b)b.style.display='none'}
+ try{SC.st=await camOpen(v)}catch(e){return scMsg('Camera not available. Allow camera access (https is required), or use "Read from photo(s)".')}
+ SC.run=true;$('#sc1').style.display='none';$('#sc2').style.display='';$('#sc3').style.display='';scMsg('Hold the camera 15–25 cm from the barcode. It beeps for every new MAC. For a whole carton label, press "Take sharp photo".');
+ window.addEventListener('hashchange',scStop,{once:true});camLoop(v,c=>c.forEach(scGot))}
+async function scSnap(){const v=$('#scv');if(!v)return;SC.pause=true;scMsg('Taking a sharp photo, hold still …');
+ try{const n=await scImage(toCanvas(await stillOf(v),3600),'the photo');scMsg(n?('Captured '+SC.n+' new MAC address(es). Press "Take sharp photo" again for the next label, or "Add & make QR".'):'No new MAC found. Move closer or tilt to avoid glare, then try again.')}catch(e){scMsg('Could not take the photo.')}SC.pause=false}
+function scStop(){camStop();const v=$('#scv');if(v){v.style.display='none';v.srcObject=null}['sc1'].forEach(i=>{const e=$('#'+i);if(e)e.style.display=''});['sc2','sc3'].forEach(i=>{const e=$('#'+i);if(e)e.style.display='none'})}
+
+/* ---------- register page: scan one modem, type customer details ---------- */
+const REG={list:[],mac:'',hit:{}};
+async function staffLogin(inst){const{error}=await sb.auth.signInWithPassword({email:$('#sem').value.trim(),password:$('#spw').value});error?alert(error.message):register(inst)}
+async function register(inst){
+ const{data:{session}}=await sb.auth.getSession();
+ if(!session){$('#app').innerHTML=`<h1>${inst?'Installer login':'Register modems'}</h1><div class="card"><input id="sem" type="email" placeholder="Email"><input id="spw" type="password" placeholder="Password"><button class="b" onclick="staffLogin(${inst})">Login</button> ${inst?'':'<a class="b s" href="#/admin">Admin</a>'}</div>`;return}
+ const{data:role}=await sb.rpc('my_role');
+ if(role!=='admin'&&role!=='installer'){$('#app').innerHTML=`<h1>No access</h1><div class="card"><p>This login is not allowed to register modems. Please ask the admin.</p><button class="b s" onclick="sb.auth.signOut().then(()=>register(${inst}))">Logout</button></div>`;return}
+ REG.inst=inst||role==='installer';
+ $('#app').innerHTML=`<h1>${REG.inst?'Installer: register modem':'Register modem'}</h1><div class="row">${REG.inst?'':'<a class="b s" href="#/admin">Back to admin</a>'}<button class="b s" onclick="camStop();sb.auth.signOut().then(()=>register(${!!REG.inst}))">Logout</button></div>
+ <div class="card"><h2>1. Scan the modem</h2>
+ <div class="row"><button class="b" id="rcam" onclick="regCam()">Start camera</button><button class="b s" id="rsnap" onclick="regSnap()" style="display:none">Take sharp photo</button><label class="b s" style="cursor:pointer">From photo<input type="file" accept="image/*" hidden onchange="regFile(this.files[0]);this.value=''"></label></div>
+ <video id="rv" playsinline muted style="width:100%;border-radius:10px;margin-top:8px;display:none"></video>
+ <p class="m" id="rs">Point the camera at ONE modem barcode or QR. Or type the MAC below.</p>
+ <input id="rpf" placeholder="Only accept MACs starting with (optional, e.g. 60156F)"></div>
+ <div class="card"><h2>2. Customer details</h2>
+ <input id="rm" placeholder="Modem MAC (scanned or typed)" oninput="regType()" autocapitalize="characters">
+ <input id="ru" placeholder="Unit number, e.g. A-12-03"><input id="rn" placeholder="Customer name"><input id="rp" type="tel" placeholder="Contact / WhatsApp no.">
+ <div class="row"><button class="b" id="rsv" onclick="regSave()">Save &amp; next</button><button class="b s" onclick="regClear()">Clear</button></div></div>
+ <div class="card"><h2>Saved in this session (<span id="rcnt">${REG.list.length}</span>)</h2><div id="rlist"></div></div>`;
+ regList()}
+function regList(){const e=$('#rlist');if(!e)return;e.innerHTML=REG.list.map((x,i)=>`<div class="row" style="border-bottom:1px solid var(--b);padding:6px 0"><div style="flex:1"><b>${esc(x.serial)}</b><br><span class="m">${esc([x.unit_no,x.cust_name,x.cust_phone].filter(Boolean).join(' · '))}</span></div><button class="b s" onclick="printSome([REG.list[${i}].serial])">Print QR label</button></div>`).join('')||'<span class="m">None yet</span>';const c=$('#rcnt');if(c)c.textContent=REG.list.length}
+function regMsg(t){const e=$('#rs');if(e)e.textContent=t}
+async function regFill(mac){REG.mac=mac;$('#rm').value=mac;beep();SC.pause=true;
+ const{data:d0}=await sb.rpc('staff_lookup',{p_mac:mac}),data=d0&&d0.exists&&!d0.locked?d0:null;
+ if(d0&&d0.locked){$('#ru').value=$('#rn').value=$('#rp').value='';return regMsg('Captured '+mac+'. This modem is already in use by a customer. Ask the admin to change it.')}
+ if(data){$('#ru').value=data.unit_no||'';$('#rn').value=data.cust_name||'';$('#rp').value=data.cust_phone||'';regMsg('Captured '+mac+'. This modem is already registered: you are editing its details.')}
+ else regMsg('Captured '+mac+'. Now type the customer details and press Save.');
+ $('#ru').focus()}
+function regCodes(codes){if(SC.pause)return;const pf=(($('#rpf')||{}).value||'').replace(/[^0-9A-Fa-f]/g,'').toUpperCase();
+ const ms=[...new Set(codes.flatMap(macFrom))].filter(m=>!pf||m.replace(/-/g,'').startsWith(pf));
+ if(ms.length>1)return regMsg('Several modem codes in view. Aim at ONE modem only.');
+ if(ms.length===1){const m=ms[0];REG.hit[m]=(REG.hit[m]||0)+1;if(REG.hit[m]>=2){REG.hit={};regFill(m)}}}
+async function regCam(){const v=$('#rv');try{SC.st=await camOpen(v)}catch(e){return regMsg('Camera not available. Allow camera access (https is required), use "From photo", or type the MAC.')}
+ SC.run=true;SC.pause=false;$('#rcam').style.display='none';$('#rsnap').style.display='';regMsg('Aim at ONE modem barcode or QR, 15–25 cm away.');window.addEventListener('hashchange',()=>{camStop()},{once:true});camLoop(v,regCodes)}
+async function regSnap(){const v=$('#rv');SC.pause=true;regMsg('Taking a sharp photo …');try{const c=await readAll(toCanvas(await stillOf(v),3000),true),ms=[...new Set(c.flatMap(macFrom))];
+ if(ms.length===1)await regFill(ms[0]);else{SC.pause=false;regMsg(ms.length?'More than one modem code in the photo. Aim at ONE modem.':'No code read. Move closer and try again.')}}catch(e){SC.pause=false;regMsg('Could not take the photo.')}}
+async function regFile(f){if(!f)return;regMsg('Reading photo …');try{const c=await readAll(toCanvas(await createImageBitmap(f),3000),true),ms=[...new Set(c.flatMap(macFrom))];
+ if(ms.length===1)await regFill(ms[0]);else regMsg(ms.length?'More than one modem code in the photo. Use a photo of ONE modem.':'No code read in that photo. Try a closer, sharper photo or type the MAC.')}catch(e){regMsg('Could not read that photo.')}}
+function regType(){const v=normId($('#rm').value);REG.mac=v}
+function regClear(){['rm','ru','rn','rp'].forEach(i=>$('#'+i).value='');REG.mac='';SC.pause=false;REG.hit={};regMsg(SC.run?'Aim at ONE modem barcode or QR.':'Point the camera at ONE modem barcode or QR. Or type the MAC below.')}
+async function regSave(){const mac=normId($('#rm').value);if(!/^([0-9A-F]{2}-){5}[0-9A-F]{2}$/.test(mac))return alert('Please scan or type a valid MAC address (12 letters/numbers, 0-9 and A-F).');
+ const v=i=>$('#'+i).value.trim()||null,un=v('ru'),nm=v('rn'),ph=v('rp');
+ const b=$('#rsv');b.disabled=true;const{error}=await sb.rpc('staff_register',{p_mac:mac,p_unit:un,p_name:nm,p_phone:ph});b.disabled=false;if(error)return alert(error.message);
+ const i=REG.list.findIndex(x=>x.serial===mac);const rec={serial:mac,unit_no:un,cust_name:nm,cust_phone:ph};if(i>=0)REG.list.splice(i,1);REG.list.unshift(rec);regList();regClear();regMsg('Saved '+mac+'. Next modem please.')}
 async function addUnit(){const rows=$('#sn').value.split('\n').map(l=>l.split(',').map(x=>x.trim())).filter(r=>r[0]);if(!rows.length)return alert('Enter at least one MAC address');
- const out=[];for(const r of rows){const id=normId(r[0]);if(!/^[A-Za-z0-9_-]{3,40}$/.test(id))return alert('Not a valid MAC address: '+r[0]);out.push({serial:id,unit_no:r[1]||null,cust_name:r[2]||null,cust_phone:r[3]||null})}
+ const out=[];for(const r of rows){const id=normId(r[0]);if(!/^[A-Za-z0-9_-]{3,40}$/.test(id))return alert('Not a valid MAC address: '+r[0]);const o={serial:id,unit_no:r[1]||null,cust_name:r[2]||null,cust_phone:r[3]||null};if(SNMAP[id])o.modem_sn=SNMAP[id];out.push(o)}
  const{error}=await sb.from('units').insert(out);error?alert(error.message):admin()}
 async function saveDet(k){const v=p=>document.getElementById(p+k).value.trim()||null;const{error}=await sb.from('units').update({unit_no:v('un-'),cust_name:v('nm-'),cust_phone:v('ph-')}).eq('serial',k);alert(error?error.message:'Saved')}
 function filterUnits(){const q=$('#us').value.toLowerCase().trim();document.querySelectorAll('.ur').forEach(r=>r.style.display=!q||r.dataset.s.includes(q)?'':'none')}
-function printLabels(){const ks=[...document.querySelectorAll('[id^="q-"]')].map(e=>e.id.slice(2));if(!ks.length)return alert('No units yet');
+function printLabels(){printSome([...document.querySelectorAll('[id^="q-"]')].map(e=>e.id.slice(2)))}
+function printSome(ks){if(!ks.length)return alert('No units yet');
  const base=location.href.split('#')[0];
  const items=ks.map(k=>{const t=document.createElement('div');new QRCode(t,{text:base+'#/u/'+encodeURIComponent(k),width:300,height:300});return `<div class="l"><img src="${t.querySelector('canvas').toDataURL('image/png')}"><div>${esc(k)}</div></div>`}).join('');
  const w=window.open('','_blank');if(!w)return alert('Please allow pop-ups to print');
